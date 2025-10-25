@@ -1,0 +1,125 @@
+#!/bin/bash
+# Usage: safe-dpkg <package.deb>
+#
+# Extracts name and version from the .deb filename.
+# Tries installing the .deb normally.
+# If the install succeeds:
+#   Copies the .deb into the cache with a timestamped filename (<name>_<version>-<timestamp>.deb).
+#   Ensures only successful installs are cached.
+# If the install fails:
+#   If dependency issues are detected, attempts apt-get install -f and retries.
+#   If still fails, looks for the most recent successful .deb with the same version and installs that.
+#   If none, rolls back to the highest lower version in the cache.
+#   Fails if no suitable fallback exists.
+# Features:
+#   Handles multiple .debs with same version (rolls back to the last successful one).
+#   Only caches successful installs.
+#   Fully automatic rollback.
+#   Compatible with <name>_<version>.deb naming convention.
+
+set -euo pipefail
+
+DEB="$1"
+CACHE_ROOT="/var/cache/safe-dpkg"
+
+# Extract <name> and <version> from filename: <name>_<version>.deb
+BASENAME=$(basename "$DEB")
+if [[ ! "$BASENAME" =~ ^(.+)_([0-9]+\.[0-9]+\.[0-9]+)\.deb$ ]]; then
+    echo "Error: file name must match <name>_<version>.deb"
+    exit 1
+fi
+PKG_NAME="${BASH_REMATCH[1]}"
+PKG_VER="${BASH_REMATCH[2]}"
+
+# Directory for this package
+PKG_CACHE="$CACHE_ROOT/$PKG_NAME"
+mkdir -p "$PKG_CACHE"
+
+# Function to find the last successful .deb to rollback to
+find_last_successful_deb() {
+    ls -t "$PKG_CACHE"/${PKG_NAME}_${PKG_VER}-*.deb 2>/dev/null || true
+}
+
+# Function to prune old debs, keep only the N most recent
+prune_old_debs() {
+    local keep=7
+    local debs
+    debs=$(ls -t "$PKG_CACHE"/*.deb 2>/dev/null)
+    if [ -n "$debs" ]; then
+        ls -t "$PKG_CACHE"/*.deb 2>/dev/null | tail -n +$((keep + 1)) | xargs -r rm -f
+    fi
+}
+
+# --- NEW FUNCTION: Safe dpkg install with dependency check ---
+safe_dpkg_install() {
+    local deb="$1"
+    local output
+
+    echo "Installing $deb..."
+    if output=$(dpkg -i "$deb" 2>&1); then
+        return 0
+    fi
+
+    echo "⚠️ dpkg installation failed."
+
+    # Detect dependency-related failure
+    if echo "$output" | grep -qiE "dependency problems|unmet dependencies"; then
+        echo "Detected dependency issue — attempting to fix..."
+        apt-get install -f -y
+        echo "Retrying dpkg installation..."
+        dpkg -i "$deb"
+        return $?
+    else
+        echo "Failure not related to dependencies:"
+        echo "$output"
+        return 1
+    fi
+}
+
+# --- NEW STEP: Uninstall package before reinstalling ---
+if dpkg -s "$PKG_NAME" &>/dev/null; then
+    CURRENT_VER=$(dpkg-query -W -f='${Version}' "$PKG_NAME" 2>/dev/null || echo "")
+    echo "Package '$PKG_NAME' is currently installed (version: $CURRENT_VER)"
+    if [[ "$CURRENT_VER" == "$PKG_VER" ]]; then
+        echo "Same version detected — removing before reinstall..."
+        apt-get remove -y "$PKG_NAME"
+    else
+        echo "Different version detected ($CURRENT_VER), proceeding with upgrade..."
+    fi
+else
+    echo "Package '$PKG_NAME' not currently installed — proceeding with install..."
+fi
+
+# --- MAIN INSTALL LOGIC ---
+
+if safe_dpkg_install "$DEB"; then
+    # Success! Cache the .deb
+    TIMESTAMP=$(date +%s)
+    cp "$DEB" "$PKG_CACHE/${PKG_NAME}_${PKG_VER}-${TIMESTAMP}.deb"
+    echo "✅ $BASENAME installed successfully and cached"
+
+    # Prune old debs, keeping only 7 most recent
+    prune_old_debs
+else
+    echo "⚠️ Installation failed for $BASENAME"
+
+    # Rollback to the most recent successful .deb of same version
+    LAST_DEB=$(find_last_successful_deb | head -n 1)
+    if [ -n "$LAST_DEB" ]; then
+        echo "Rolling back to last successful install: $LAST_DEB"
+        dpkg -i "$LAST_DEB"
+        exit 0
+    fi
+
+    # If no same-version cache, find highest lower version
+    PREV_DEB=$(ls "$PKG_CACHE"/${PKG_NAME}_*.deb 2>/dev/null | grep -v "$BASENAME" | sort -V | tail -n 1 || true)
+    if [ -n "$PREV_DEB" ]; then
+        echo "Rolling back to previous lower version: $PREV_DEB"
+        apt-get remove -y "$PKG_NAME"
+        dpkg -i "$PREV_DEB"
+        exit 0
+    fi
+
+    echo "❌ No previous successful install available — manual recovery required!"
+    exit 1
+fi
