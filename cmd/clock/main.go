@@ -40,23 +40,30 @@ func main() {
 
 func runMain(d common.DaemonNotifier, ip string, port int64, healthPort int64) {
 
-	// Watchdog informing systemd to restart the task if we stall for too long.
+	// Regularly ping the systemd watchdog so we get force restarted if our task stalls for too long.
 	// This only works when the task is run under systemd.
 	common.EnableBackgroundWatchdog(d)
 
 	// Health port for checking the health and load of the task.
 	// Used by deb packaging to ensure the task is healthy before marking the install successful.
 	common.StartHealthServer(NAME, VERSION, fmt.Sprintf("%s:%d", ip, healthPort))
+
+	// Set up the serving router. Chi is a much better router than the standard net/http
+	// =================================================
 	r := chi.NewRouter()
+	// Prevent the service from seeing more than a busyness of 1000 QPS.
+	// This is useful for signalling a client side adaptive throttler.
+	r.Use(common.BusynessThrottleMiddleware(5, 10))
 	r.Use(middleware.RequestID)
 	r.Use(middleware.RealIP)
 	r.Use(middleware.Logger)
+	// Recover from most issues that might happen in the handlers.
 	r.Use(middleware.Recoverer)
 
 	// Routes
 	r.Get("/", homeHandler)
 
-	// Static files
+	// Static files (not used for clock, but here for example)
 	fileServer := http.StripPrefix("/static/", http.FileServer(http.Dir("static")))
 	r.Handle("/static/*", fileServer)
 

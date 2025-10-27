@@ -9,10 +9,19 @@ import (
 )
 
 var (
-	service   string
-	busyness  float64
-	version   string
-	startTime time.Time
+	// These values don't change once in steady state.
+	service       string
+	version       string
+	startTime     time.Time
+	loadedQps     float64 // ideal full load QPS the service can handle (recommend setting to <80% of max for scaling purposes).
+	qpsThrottler  *QpsThrottler
+	windowSeconds float64 = 0.5 // Seconds for the EMA to decay, similiar to the the moving window but for exponential moving averages.
+)
+
+var (
+	// These values are useful for a QPS log statement that happens ever 100 requests.
+	acceptedCounter   int64     = 0
+	acceptedStartTime time.Time = time.Now()
 )
 
 func StartHealthServer(name string, newVersion string, port string) error {
@@ -40,11 +49,42 @@ func StartHealthServer(name string, newVersion string, port string) error {
 	return nil
 }
 
-func SetBusyness(newBusyness float64) {
-	busyness = newBusyness
+// Use this to force an upper limit on the service load.
+func BusynessThrottleMiddleware(busyQps, throttleQps float64) func(http.Handler) http.Handler {
+	qpsThrottler = NewQpsThrottler(throttleQps, time.Duration(windowSeconds*float64(time.Second)))
+	loadedQps = busyQps
+
+	return func(next http.Handler) http.Handler {
+
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			accept := qpsThrottler.ShouldAccept()
+
+			if !accept {
+				// reject with 503 Service Unavailable
+				http.Error(w, "Server too busy, try again later", http.StatusServiceUnavailable)
+				return
+			}
+
+			// Useful log statement on actual accepted QPS every 100 requests.
+			acceptedCounter++
+			if time.Since(acceptedStartTime).Seconds() > 1 {
+				log.Printf("ACCEPTED QPS: %.5f (Full QPS: %.5f)", float64(acceptedCounter)/time.Since(acceptedStartTime).Seconds(), qpsThrottler.CurrentQPS())
+				acceptedCounter = 0
+				acceptedStartTime = time.Now()
+			}
+
+			next.ServeHTTP(w, r)
+		})
+	}
 }
 
 func healthzHandler(w http.ResponseWriter, r *http.Request) {
+	busyness := GetBusyness()
+
 	w.Header().Set("Content-Type", "text/plain")
-	fmt.Fprintf(w, "busyness=%.1f\nservice=%s\nversion=%s\nuptime=%.1f\n", busyness, service, version, time.Since(startTime).Seconds())
+	fmt.Fprintf(w, "busyness=%.6f\naccepted=%d\nservice=%s\nversion=%s\nuptime=%.1f\n", busyness, acceptedCounter, service, version, time.Since(startTime).Seconds())
+}
+
+func GetBusyness() float64 {
+	return qpsThrottler.CurrentQPS() / loadedQps
 }
