@@ -51,11 +51,17 @@ ssh ${SERVER?} "sudo bash -c 'apt-get -y remove clock ; dpkg -i clock_1.0.0.deb 
 
 ## If you want a simpler and rollback safe dpkg installation:
 
-- First, copy tools/safe-dpkg on your service host server to /usr/local/bin
+- First configure SERVER and NAME in the environment for your package and server host:
 
 ``` bash
+NAME=clock
 SERVER=myfqdn or IP address
+```
 
+- Next (if not yet done), copy tools/safe-dpkg on your service host server to /usr/local/bin
+
+
+``` bash
 scp tools/safe-dpkg ${SERVER?}:
 ssh ${SERVER?} "sudo bash -c 'chown root:root safe-dpkg && chmod 755 safe-dpkg && mv safe-dpkg /usr/local/bin/safe-dpkg'"
 ```
@@ -68,10 +74,9 @@ ssh ${SERVER?} "sudo bash -c 'chown root:root safe-dpkg && chmod 755 safe-dpkg &
   - On dependency issues, it will automatically install the dependencies.
 
 ``` bash
-SERVER=myfqdn or IP address
 
 # Build, Copy over, Deploy
-./cmd/clock/build.sh && scp -r cmd/clock/clock_1.0.0.deb ${SERVER?}: && ssh ${SERVER?} "sudo bash -c 'safe-dpkg clock_1.0.0.deb"
+./cmd/${NAME?}/build.sh && scp -r cmd/clock/${NAME?}_1.0.0.deb ${SERVER?}: && ssh ${SERVER?} "sudo bash -c 'safe-dpkg ${NAME?}_1.0.0.deb"
 ```
 
 ## Debugging Tips
