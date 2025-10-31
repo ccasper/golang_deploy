@@ -73,10 +73,9 @@ ssh ${SERVER?} "sudo bash -c 'chown root:root safe-dpkg && chmod 755 safe-dpkg &
   - On failure, it rolls back to the newest deb file in `/var/cache/safe-dpkg`.
   - On dependency issues, it will automatically install the dependencies.
 
+Build, Copy over, Deploy
 ``` bash
-
-# Build, Copy over, Deploy
-./cmd/${NAME?}/build.sh && scp -r cmd/${NAME?}/${NAME?}_1.0.0.deb ${SERVER?}: && ssh ${SERVER?} "sudo bash -c 'safe-dpkg ${NAME?}_1.0.0.deb"
+./cmd/${NAME?}/build.sh && scp -r cmd/${NAME?}/${NAME//_/-}_1.0.0.deb ${SERVER?}: && ssh ${SERVER?} "sudo bash -c 'safe-dpkg ${NAME//_/-}_1.0.0.deb"
 ```
 
 ## Debugging Tips
