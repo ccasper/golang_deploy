@@ -55,6 +55,7 @@ ssh ${SERVER?} "sudo bash -c 'apt-get -y remove clock ; dpkg -i clock_1.0.0.deb 
 
 ``` bash
 NAME=clock
+VERSION=1.0.33
 SERVER=myfqdn or IP address
 ```
 
@@ -75,7 +76,7 @@ ssh ${SERVER?} "sudo bash -c 'chown root:root safe-dpkg && chmod 755 safe-dpkg &
 
 Build, Copy over, Deploy
 ``` bash
-./cmd/${NAME?}/build.sh && scp -r cmd/${NAME?}/${NAME//_/-}_1.0.0.deb ${SERVER?}: && ssh ${SERVER?} "sudo bash -c 'safe-dpkg ${NAME//_/-}_1.0.0.deb'"
+./cmd/${NAME?}/build.sh && scp -r cmd/${NAME?}/${NAME//_/-}_${VERSION?}.deb ${SERVER?}: && ssh ${SERVER?} "sudo bash -c 'safe-dpkg ${NAME//_/-}_{VERSION?}.deb'"
 ```
 
 ## Debugging Tips
