@@ -31,17 +31,17 @@ if [[ -z "$NAME" || -z "$VERSION" || -z "$SOURCES" || -z "$PORT" || -z "$HEALTH_
   exit 1
 fi
 
+if [[ "$NAME" == *"_"* ]]; then
+  echo "Error: NAME ('$NAME') contains an underscore (_), which against deb package requirements. Note, the code folder should use "_" per golang requirements." >&2
+  exit 1
+fi
+
 ARCHITECTURE="all" # because we support multiple architectures in one package
 MAINTAINER="user <user@gmail.com>"
 DESCRIPTION="Runs the appropriate binary for ${NAME} based on system architecture."
 
 # user/group to run this binary on the server.
 USER="${NAME}"
-
-if [[ -z "$NAME" || -z "$VERSION" ]]; then
-  echo "Error: could not parse NAME, VERSION from '$version_file'." >&2
-  exit 1
-fi
 
 # First build the source archive
 if [[ "$ROOT" != /* ]]; then
@@ -85,27 +85,49 @@ echo "Packaging .go files into $ARCHIVE_NAME..."
 mkdir -p "${BUILD_DIR}/opt/${NAME}/src"
 INCLUDE_LIST="${BUILD_DIR}/opt/${NAME}/src/include.list"
 
-# Add .go files recursively but prune those in _todelete
+# Define exclusions here
+EXCLUDES=(
+  "./_todelete"
+  "*/_todelete/*"
+  "*/secrets.go"
+  "*/build/*"
+  "*.deb"
+  "*.tmp"
+  "*.log"
+  "*.bak"
+  "*/static/images/*"
+  "*/static/media/*"
+  "*/static/audio/*"
+  "*.swp"
+  "*.DS_Store"
+  "*/go.work.sum"
+  "*/go.work"
+)
+
+# Build the `find` exclusion expression dynamically
+EXPR=()
+for e in "${EXCLUDES[@]}"; do
+  EXPR+=( -path "$e" -o )
+done
+# remove trailing -o
+unset 'EXPR[${#EXPR[@]}-1]'
+
 PREV_PWD="$(pwd)"
 cd "${ROOT}"
-for path in $SOURCES; do
-  if [[ -e "$path" ]]; then
-    echo "  - Adding files from ${ROOT}/$path to $INCLUDE_LIST..."
-    find $path -type d -name "_todelete" -prune -o -type f -name "*.go" -print >> "$INCLUDE_LIST"
-    find $path -type d -name "_todelete" -prune -o -type f -name "*.sh" -print >> "$INCLUDE_LIST"
-    find $path -type d -name "_todelete" -prune -o -type f -name "*.py" -print >> "$INCLUDE_LIST"
-    find $path -type d -name "_todelete" -prune -o -type f -name "*.js" -print >> "$INCLUDE_LIST"
-    find $path -type d -name "_todelete" -prune -o -type f -name "*.css" -print >> "$INCLUDE_LIST"
-    find $path -type d -name "_todelete" -prune -o -type f -name "*.proto" -print >> "$INCLUDE_LIST"
-    # Add readme.md files.
-    find $path -type d -name "_todelete" -prune -o -type f -iname "readme.md" -print >> "$INCLUDE_LIST"
-    # Add go mod files if found in the 1st level of this folder.
-    find $path -maxdepth 1 -type f -name "go.*" >> "$INCLUDE_LIST"
 
-  else
-    echo "Warning: $path not found" >&2
+# Run find with pruning and exclusions
+echo "Building include list (with exclusions)..."
+ for path in $SOURCES; do
+  echo "  - Adding files from ${ROOT}/$path to $INCLUDE_LIST..."
+  if [[ ! -e "$path" ]]; then
+    echo "Error: Source path '$path' does not exist." >&2
+    exit 1
   fi
+  find $path \( "${EXPR[@]}" \) -prune -o -type f -print >> "$INCLUDE_LIST"
 done
+
+# Add go mod files if found in the 1st level of this folder.
+find . -maxdepth 1 \( "${EXPR[@]}" \) -prune -o -type f -name "go.*" -print >> "$INCLUDE_LIST"
 
 # Finally, create the archive using the list of files generated above.
 mkdir -p "${BUILD_DIR}/opt/${NAME}/src"
