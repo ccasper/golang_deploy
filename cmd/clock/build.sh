@@ -139,6 +139,10 @@ tar -czf "${BUILD_DIR}/opt/${NAME}/src/${ARCHIVE_NAME}" -T "$INCLUDE_LIST"
 mkdir -p "${BUILD_DIR}/opt/${NAME}/data"
 touch "${BUILD_DIR}/opt/${NAME}/data/.storage"
 
+# TODO copy over any static files/certs.
+# mkdir -p "${BUILD_DIR}/opt/${NAME}/www"
+# cp -r "${MAIN_DIR}/cert" "${BUILD_DIR}/opt/${NAME}/cert"
+
 # Build the golang service binaries for arm64 and amd64.
 cd "${SCRIPT_DIR}"
 env GOARCH=arm64 go build -o "$BUILD_DIR/opt/${NAME}/bin/${NAME}-arm64" $MAIN_DIR || die "Unable to create"
@@ -179,6 +183,11 @@ Environment="XDG_CONFIG_HOME=/tmp/.chromium"
 Environment="XDG_CACHE_HOME=/tmp/.chromium"
 # Set RestartSec to avoid rapid restart loops
 RestartSec=5s
+
+# Uncomment to allow running on privileged ports as a standard user.
+#AmbientCapabilities=CAP_NET_BIND_SERVICE
+#CapabilityBoundingSet=CAP_NET_BIND_SERVICE
+#NoNewPrivileges=no
 
 # Add StartLimitBurst and StartLimitIntervalSec to control restart frequency
 StartLimitBurst=3
@@ -241,10 +250,14 @@ if command -v ufw >/dev/null 2>&1; then
     ufw reload
 fi
 
+# Create system group if it doesn't exist, we do this because we want a consistent GID.
+if ! getent group "$NAME" >/dev/null; then
+    groupadd -g $PORT "$USER"
+fi
 # Create system user if it doesn't exist
 if ! id -u "${USER}" >/dev/null 2>&1; then
     echo "Creating system user '${USER}'..."
-    useradd --system --shell /usr/sbin/nologin --home /opt/${USER}/data "${USER}"
+    useradd -u $PORT -g $PORT --system --shell /usr/sbin/nologin --home /opt/${USER}/data "${USER}"
 fi
 mkdir -p /home/${USER}
 chown -R "${USER}:${USER}" /home/${USER}
@@ -253,6 +266,10 @@ chmod -R 775 /home/${USER}
 # Set ownership of service files and directories
 chown -R root:root /opt/${NAME}
 chown -R "${USER}:${USER}" /opt/${NAME}/data
+
+# Uncomment to allow the binary to run on priviledged ports:
+#setcap 'cap_net_bind_service=+ep' /opt/${NAME}/bin/${NAME}-arm64
+#setcap 'cap_net_bind_service=+ep' /opt/${NAME}/bin/${NAME}-amd64
 
 # Enable and start the service
 systemctl daemon-reload
@@ -265,8 +282,25 @@ INTERVAL=1
 elapsed=0
 
 check_healthy() {
-    echo "curl http://localhost:\${HEALTH_PORT}/healthz"
-    curl -sf --connect-timeout 2 --max-time 5 http://localhost:\${HEALTH_PORT}/healthz >/dev/null
+    echo "Checking health on all local IPs (including localhost)..."
+
+    # Get all non-loopback IPv4 addresses
+    ips=\$(hostname -I 2>/dev/null | tr ' ' '\n')
+    ips="\${ips}
+127.0.0.1
+::1"
+
+    for ip in \$ips; do
+        echo "→ Trying http://\$ip:\${HEALTH_PORT}/healthz"
+        if curl -sf --connect-timeout 2 --max-time 5 "http://[\$ip]:\${HEALTH_PORT}/healthz" >/dev/null 2>&1 ||
+           curl -sf --connect-timeout 2 --max-time 5 "http://\$ip:\${HEALTH_PORT}/healthz" >/dev/null 2>&1; then
+            echo "✓ Healthy on \$ip"
+            return 0
+        fi
+    done
+
+    echo "✗ No healthy response on any interface"
+    return 1
 }
 
 echo "Waiting up to \${TIMEOUT} seconds for ${NAME} service to send watchdog ping..."
@@ -303,8 +337,8 @@ systemctl daemon-reload
 if [ "\$1" = "purge" ]; then
     echo "Package is being purged (full removal)."
     rm -rf "/opt/${NAME}/data/*"
-    rm -rf "/home/${NAME}/*
-    rm -rf "/home/${NAME}/.*
+    rm -rf "/home/${NAME}/*"
+    rm -rf "/home/${NAME}/.*"
     rm -f "/var/log/${NAME}"
     rm -f "/var/log/${NAME}.log\*"
 fi
@@ -314,6 +348,9 @@ if id -u "${USER}" >/dev/null 2>&1; then
     echo "Removing system user '${USER}'..."
     userdel "${USER}" || true
 fi
+if getent group "${USER}" >/dev/null; then
+      delgroup "${USER}" || true
+  fi
 
 # Remove UFW rule before uninstall
 if command -v ufw >/dev/null 2>&1; then
