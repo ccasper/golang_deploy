@@ -119,7 +119,7 @@ cd "${ROOT}"
 
 # Run find with pruning and exclusions
 echo "Building include list (with exclusions)..."
- for path in $SOURCES; do
+for path in $SOURCES; do
   echo "  - Adding files from ${ROOT}/$path to $INCLUDE_LIST..."
   if [[ ! -e "$path" ]]; then
     echo "Error: Source path '$path' does not exist." >&2
