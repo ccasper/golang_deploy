@@ -5,7 +5,7 @@ const NAME = "clock"
 const VERSION = "1.0.0"
 
 const PORT = 8082
-const HEALTH_PORT = 8083
+const HEALTH_PORT = 18083
 
 // This is the root prefix where all SOURCES folders live under.
 // WHY? The source archive paths will be relative to this.
