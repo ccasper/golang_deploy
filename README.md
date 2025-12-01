@@ -76,7 +76,7 @@ ssh ${SERVER?} "sudo bash -c 'chown root:root safe-dpkg && chmod 755 safe-dpkg &
 
 Build, Copy over, Deploy
 ``` bash
-./cmd/${NAME//-/_}/build.sh && scp -r cmd/${NAME//-/_}/$NAME_${VERSION?}.deb ${SERVER?}: && ssh -tt ${SERVER?} "sudo bash -c 'safe-dpkg ${NAME}_${VERSION?}.deb'"
+./cmd/${NAME//-/_}/build.sh && scp -r cmd/${NAME//-/_}/${NAME}_${VERSION?}.deb ${SERVER?}: && ssh -tt ${SERVER?} "sudo bash -c 'safe-dpkg ${NAME}_${VERSION?}.deb'"
 ```
 
 ## Debugging Tips
